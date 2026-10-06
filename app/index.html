@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="referrer" content="no-referrer">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>YouTube to MP3 / MP4 · Test</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, sans-serif; color: #172033; background: #f3f5f9; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 64px 20px; }
+    main { max-width: 580px; margin: auto; background: white; border: 1px solid #dde2eb; border-radius: 18px; padding: 32px; box-shadow: 0 12px 40px #17203308; }
+    .badge { display: inline-block; font-size: 12px; font-weight: 700; letter-spacing: .08em; color: #52617a; background: #eef1f6; padding: 6px 10px; border-radius: 6px; }
+    h1 { font-size: 30px; letter-spacing: -.04em; margin: 20px 0 8px; }
+    p { color: #52617a; line-height: 1.6; }
+    form { margin-top: 28px; }
+    label { display: block; font-size: 14px; font-weight: 600; margin: 20px 0 8px; }
+    input, select, button { font: inherit; width: 100%; border-radius: 8px; padding: 12px; }
+    input, select { border: 1px solid #bac4d4; background: white; color: #172033; }
+    :focus-visible { outline: 3px solid #98b4ff; outline-offset: 3px; }
+    button { border: 0; background: #2855db; color: white; font-weight: 600; margin-top: 24px; cursor: pointer; }
+    button:hover { background: #1e43b2; }
+    .secondary { background: #eef1f6; color: #172033; margin-top: 12px; }
+    .secondary:hover { background: #dde2eb; }
+    [hidden] { display: none !important; }
+    button:disabled { opacity: .65; cursor: wait; }
+    #status { margin-bottom: 0; overflow-wrap: anywhere; }
+    #status[data-error="true"] { color: #b42318; }
+    #result { margin-top: 24px; padding-top: 20px; border-top: 1px solid #dde2eb; }
+    audio, video { width: 100%; margin: 10px 0 16px; }
+    a { color: #2855db; }
+    #stats { margin-top: 24px; padding-top: 16px; border-top: 1px solid #dde2eb; }
+    #stats h2 { font-size: 17px; margin: 0 0 16px; }
+    .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 0; }
+    .stats-grid div { min-width: 0; }
+    .stats-grid dt { font-size: 12px; color: #52617a; }
+    .stats-grid dd { margin: 4px 0 0; font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
+    .footer { margin-top: 24px; font-size: 13px; }
+    @media (max-width: 480px) { body { padding: 24px 12px; } main { padding: 24px 20px; } }
+  </style>
+</head>
+<body>
+  <main>
+    <span class="badge">BACKEND TEST</span>
+    <h1>YouTube to MP3 / MP4</h1>
+    <p>Paste a video link, choose audio or video, then preview and download the result.</p>
+    <form id="convert-form">
+      <div id="auth-field" hidden>
+        <label for="api-key">Access key</label>
+        <input id="api-key" type="password" autocomplete="off" placeholder="Your conversion API access key">
+      </div>
+      <label for="url">YouTube video link</label>
+      <input id="url" name="url" type="url" required maxlength="2048" placeholder="https://www.youtube.com/watch?v=…" autocomplete="off">
+      <label for="format">Download format</label>
+      <select id="format" name="format">
+        <option value="mp3">MP3 — audio</option>
+        <option value="mp4">MP4 — video (up to 720p)</option>
+      </select>
+      <div id="audio-quality">
+      <label for="bitrate">Audio quality</label>
+      <select id="bitrate" name="bitrate">
+        <option value="128">128 kbps</option>
+        <option value="192" selected>192 kbps (default)</option>
+        <option value="256">256 kbps</option>
+        <option value="320">320 kbps</option>
+      </select>
+      </div>
+      <button id="submit" type="submit">Convert to MP3</button>
+    </form>
+    <button id="cancel" class="secondary" type="button" hidden>Cancel conversion</button>
+    <button id="resume" class="secondary" type="button" hidden>Check job status</button>
+    <p id="status" role="status" aria-live="polite">Ready to convert.</p>
+    <section id="result" aria-label="Converted media" hidden>
+      <audio id="preview" controls preload="metadata"></audio>
+      <video id="video-preview" controls playsinline preload="metadata" hidden></video>
+      <button id="play-sound" class="secondary" type="button">Play with sound</button>
+      <p id="sound-status" class="footer" role="status" aria-live="polite"></p>
+      <a id="download" download="audio.mp3">Download MP3</a>
+      <p id="expiry" class="footer"></p>
+      <section id="stats" aria-labelledby="stats-title" hidden>
+        <h2 id="stats-title">Download &amp; conversion stats</h2>
+        <dl id="stats-values" class="stats-grid"></dl>
+        <p id="stats-note" class="footer"></p>
+      </section>
+      <button id="delete" class="secondary" type="button">Delete saved result</button>
+    </section>
+    <p class="footer">Single videos only. <a href="/docs">API docs</a> · <a href="/health" target="_blank" rel="noopener">Server health</a></p>
+  </main>
+  <script>
+    const form = document.querySelector('#convert-form');
+    const button = document.querySelector('#submit');
+    const status = document.querySelector('#status');
+    const result = document.querySelector('#result');
+    const preview = document.querySelector('#preview');
+    const download = document.querySelector('#download');
+    const videoPreview = document.querySelector('#video-preview');
+    const formatSelect = document.querySelector('#format');
+    const cancelButton = document.querySelector('#cancel');
+    const resumeButton = document.querySelector('#resume');
+    const deleteButton = document.querySelector('#delete');
+    const soundButton = document.querySelector('#play-sound');
+    const soundStatus = document.querySelector('#sound-status');
+    const statsPanel = document.querySelector('#stats');
+    const statsValues = document.querySelector('#stats-values');
+    const statsNote = document.querySelector('#stats-note');
+    function seconds(value) {
+      return typeof value === 'number' && Number.isFinite(value) ? `${value.toFixed(2)} s` : 'Not recorded';
+    }
+    function bytes(value) {
+      if (typeof value !== 'number' || !Number.isFinite(value)) return 'Not recorded';
+      if (value >= 1024 ** 3) return `${(value / 1024 ** 3).toFixed(2)} GiB`;
+      return `${(value / 1024 ** 2).toFixed(2)} MiB`;
+    }
+    function showStats(stats) {
+      statsPanel.hidden = false;
+      statsValues.replaceChildren();
+      if (!stats) {
+        statsNote.textContent = 'Stats were not recorded for this older job. Start a new conversion to measure it.';
+        return;
+      }
+      const values = [
+        ['Total time to ready', seconds(stats.total_seconds)],
+        ['Queue wait', seconds(stats.queue_seconds)],
+        ['Server job time', seconds(stats.processing_wall_seconds)],
+        ['YouTube download time', seconds(stats.download_seconds)],
+        ['Processing & validation', seconds(stats.processing_seconds)],
+        ...(stats.upload_seconds == null ? [] : [['Storage upload', seconds(stats.upload_seconds)]]),
+        ['CPU time (all processes)', seconds(stats.cpu_seconds)],
+        ['Average CPU (100% = 1 core)', typeof stats.average_cpu_percent === 'number' ? `${stats.average_cpu_percent.toFixed(1)}%` : 'Not recorded'],
+        ['Peak RAM (one process)', bytes(stats.peak_process_memory_bytes)],
+        ['Peak temp disk (sampled)', bytes(stats.peak_temp_disk_bytes)],
+        ['Source media downloaded', bytes(stats.source_media_bytes)],
+        ['Final file size', bytes(stats.output_bytes)],
+      ];
+      for (const [label, value] of values) {
+        const entry = document.createElement('div');
+        const term = document.createElement('dt');
+        const description = document.createElement('dd');
+        term.textContent = label;
+        description.textContent = value;
+        entry.append(term, description);
+        statsValues.append(entry);
+      }
+      statsNote.textContent = 'Server measurements; excludes transfer to your device. CPU covers the worker and its child processes. Peak RAM is the largest individual process, not combined RAM. Disk is sampled every 0.2 s. Source bytes exclude network overhead and retries.';
+    }
+    let distributed = false;
+    let authMode = 'internal';
+    let conversionBase = '';
+    let currentToken = new URLSearchParams(location.search).get('token');
+    let sessionKey = null;
+    const modeReady = fetch('/api/v1/config', { cache: 'no-store' }).then(async response => {
+      if (!response.ok) return;
+      const config = await response.json();
+      distributed = config.architecture === 'distributed';
+      authMode = config.auth_mode || 'internal';
+      conversionBase = config.conversion_base || '';
+      document.querySelector('#auth-field').hidden = !config.requires_api_key;
+    }).catch(() => {});
+    let currentJob = new URLSearchParams(location.search).get('job');
+    let pollGeneration = 0;
+    let busy = false;
+
+    function setBusy(value) {
+      busy = value;
+      button.disabled = value;
+      formatSelect.disabled = value;
+      form.setAttribute('aria-busy', String(value));
+      cancelButton.hidden = !value;
+      button.textContent = value ? 'Preparing your file…' : `Convert to ${formatSelect.value.toUpperCase()}`;
+    }
+    function updateFormat() {
+      document.querySelector('#audio-quality').hidden = formatSelect.value === 'mp4';
+      setBusy(busy);
+    }
+    function message(text, error = false) {
+      status.textContent = text;
+      status.dataset.error = String(error);
+    }
+    function clearPreview() {
+      statsPanel.hidden = true;
+      statsValues.replaceChildren();
+      result.hidden = true;
+      for (const player of [preview, videoPreview]) {
+        player.pause();
+        player.removeAttribute('src');
+        player.load();
+        player.hidden = true;
+      }
+      download.removeAttribute('href');
+    }
+    function rememberJob(id) {
+      currentJob = id;
+      const url = new URL(location.href);
+      if (id) url.searchParams.set('job', id);
+      else url.searchParams.delete('job');
+      if (id && currentToken) url.searchParams.set('token', currentToken);
+      else url.searchParams.delete('token');
+      history.replaceState(null, '', url);
+    }
+    async function api(url, options) {
+      const response = await fetch(url, { cache: 'no-store', ...options });
+      const data = response.status === 204 ? null : await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const detail = Array.isArray(data.detail) ? data.detail.map(item => item.msg).join(' ') : data.detail;
+        const error = new Error(typeof detail === 'string' ? detail : `Request failed (HTTP ${response.status}).`);
+        error.status = response.status;
+        throw error;
+      }
+      return data;
+    }
+    async function pollJob(id) {
+      const generation = ++pollGeneration;
+      let errors = 0;
+      resumeButton.hidden = true;
+      setBusy(true);
+      while (generation === pollGeneration) {
+        try {
+          const job = await api(distributed ? `${conversionBase}/api/v1/progress?sig=${encodeURIComponent(currentToken)}` : `/jobs/${id}`);
+          if (generation !== pollGeneration) return;
+          errors = 0;
+          formatSelect.value = job.format;
+          updateFormat();
+          if (job.status === 'completed') {
+            const player = job.format === 'mp4' ? videoPreview : preview;
+            player.hidden = false;
+            player.defaultMuted = false;
+            player.muted = false;
+            player.volume = 1;
+            player.src = job.preview_url;
+            soundStatus.textContent = 'Sound is on. Press play to preview.';
+            download.href = job.download_url;
+            download.download = job.format === 'mp4' ? 'video.mp4' : 'audio.mp3';
+            download.textContent = `Download ${job.format.toUpperCase()}`;
+            result.hidden = false;
+            showStats(job.stats);
+            document.querySelector('#expiry').textContent = `Saved until ${new Date(job.expires_at * 1000).toLocaleString()}.`;
+            message(`Your ${job.format.toUpperCase()} is ready (${(job.size_bytes / 1024 / 1024).toFixed(2)} MB).`);
+            setBusy(false);
+            return;
+          }
+          if (job.status === 'failed' || job.status === 'cancelled') {
+            message(`${job.error || (job.status === 'cancelled' ? 'Conversion cancelled.' : 'Conversion failed.')} Reference: ${job.id}`, job.status === 'failed');
+            setBusy(false);
+            return;
+          }
+          const stages = { queued: 'Waiting for a conversion slot…', starting: 'Starting conversion…',
+            downloading: 'Downloading video…', processing: 'Merging and processing media…',
+            encoding: 'Preparing a compatible MP4…', validating: 'Checking the finished file…', uploading: 'Saving your download…' };
+          message(`${stages[job.stage] || 'Processing…'} You can refresh this page without losing the job.`);
+        } catch (error) {
+          if (generation !== pollGeneration) return;
+          if ([401, 404, 410, 422].includes(error.status)) {
+            message(error.message, true);
+            setBusy(false);
+            return;
+          }
+          errors += 1;
+          message(`Connection interrupted. Your job is saved. ${errors < 3 ? 'Reconnecting…' : 'Use “Check job status” to reconnect.'}`, true);
+          if (errors >= 3) {
+            resumeButton.hidden = false;
+            return;
+          }
+        }
+        await new Promise(resolve => setTimeout(resolve, errors ? 3000 : 1000));
+      }
+    }
+    formatSelect.addEventListener('change', updateFormat);
+    form.addEventListener('submit', async event => {
+      event.preventDefault();
+      if (busy) return;
+      ++pollGeneration;
+      clearPreview();
+      setBusy(true);
+      resumeButton.hidden = true;
+      message('Submitting conversion…');
+      cancelButton.disabled = true;
+      const id = Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('');
+      const payload = { url: document.querySelector('#url').value.trim(), format: formatSelect.value,
+                        bitrate: Number(document.querySelector('#bitrate').value) };
+      try {
+        await modeReady;
+        let job;
+        if (distributed) {
+          if (authMode === 'identity') throw new Error('Please sign in and convert through your application. This page is an internal test client.');
+          // Credentials stay in memory; signed job authorization survives page refresh.
+          const auth = await api('/api/v1/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(authMode === 'anonymous' ? {} : { api_key: document.querySelector('#api-key').value }) });
+          sessionKey = auth.key;
+          const init = await api('/api/v1/init', { method: 'POST', headers: {
+            'Content-Type': 'application/json', 'Authorization': `Bearer ${sessionKey}` }, body: JSON.stringify(payload) });
+          // Retrying this same short-lived URL is idempotent; it cannot create another job.
+          try { job = await api(init.convertURL, { method: 'POST' }); }
+          catch (error) {
+            if (!(error instanceof TypeError)) throw error;
+            job = await api(init.convertURL, { method: 'POST' });
+          }
+          currentToken = job.jobToken;
+        } else {
+          job = await api('/jobs', { method: 'POST', headers: {
+            'Content-Type': 'application/json', 'X-Idempotency-Key': id }, body: JSON.stringify(payload) });
+        }
+        rememberJob(job.id);
+        cancelButton.disabled = false;
+        await pollJob(job.id);
+      } catch (error) {
+        if (error instanceof TypeError && !distributed) {
+          cancelButton.disabled = false;
+          rememberJob(id);
+          message('Connection interrupted while submitting. Checking whether the job was accepted…');
+          await pollJob(id);
+        } else {
+          message(error.message, true);
+          setBusy(false);
+        }
+      } finally { cancelButton.disabled = false; }
+    });
+    cancelButton.addEventListener('click', async () => {
+      if (!currentJob) return;
+      cancelButton.disabled = true;
+      try {
+        await api(distributed ? `${conversionBase}/api/v1/cancel?sig=${encodeURIComponent(currentToken)}` : `/jobs/${currentJob}/cancel`, { method: 'POST' });
+        await pollJob(currentJob);
+      } catch (error) { message(error.message, true); }
+      finally { cancelButton.disabled = false; }
+    });
+    resumeButton.addEventListener('click', () => { if (currentJob) pollJob(currentJob); });
+    deleteButton.addEventListener('click', async () => {
+      if (!currentJob) return;
+      clearPreview();
+      try {
+        await api(distributed ? `${conversionBase}/api/v1/job?sig=${encodeURIComponent(currentToken)}` : `/jobs/${currentJob}`, { method: 'DELETE' });
+        currentToken = null;
+        rememberJob(null);
+        message('Saved result deleted. Ready for another video.');
+      } catch (error) { message(error.message, true); resumeButton.hidden = false; }
+    });
+    soundButton.addEventListener('click', async () => {
+      const player = videoPreview.hidden ? preview : videoPreview;
+      player.defaultMuted = false;
+      player.muted = false;
+      player.volume = 1;
+      try {
+        await player.play();
+        soundStatus.textContent = 'Playing with sound. If you hear nothing, check the browser tab and system volume.';
+      } catch (error) {
+        soundStatus.textContent = 'Playback was blocked or unsupported. Use the player controls or download the file.';
+      }
+    });
+    for (const player of [preview, videoPreview]) {
+      player.addEventListener('volumechange', () => {
+        if (player.hidden) return;
+        soundStatus.textContent = player.muted || player.volume === 0
+          ? 'Preview is muted. Select Play with sound to unmute.' : 'Preview sound is on.';
+      });
+      player.addEventListener('error', () => {
+        if (!player.getAttribute('src')) return;
+        message('The browser could not play this preview. Use Download to save the file, or check whether the result has expired.', true);
+      });
+    }
+    modeReady.then(() => {
+      if (currentJob && /^[a-f0-9]{32}$/.test(currentJob) && (!distributed || currentToken)) pollJob(currentJob);
+      else rememberJob(null);
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,67 @@
+name: Backend regression
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: disposable-test
+          POSTGRES_DB: media_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d media_test"
+          --health-interval 3s --health-timeout 3s --health-retries 20
+      redis:
+        image: redis:7.4-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 3s --health-timeout 3s --health-retries 20
+    env:
+      ALLOW_DISPOSABLE_POSTGRES_TESTS: '1'
+      TEST_POSTGRES_URL: postgresql+psycopg://postgres:disposable-test@localhost:5432/media_test
+      ALLOW_DISPOSABLE_SERVICE_TESTS: '1'
+      TEST_REDIS_URL: redis://localhost:6379/0
+      TEST_S3_ENDPOINT: http://localhost:19389
+      TEST_S3_ACCESS_KEY: audit-test
+      TEST_S3_SECRET_KEY: audit-disposable-test-secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: python -m pip install -r requirements-distributed.lock -r requirements-dev.txt
+      - name: Start disposable S3
+        run: >-
+          docker run --detach --name audit-s3 --publish 127.0.0.1:19389:9000
+          --env AWS_ACCESS_KEY_ID=audit-test --env AWS_SECRET_ACCESS_KEY=audit-disposable-test-secret
+          chrislusf/seaweedfs:4.48 mini -dir=/tmp/audit-data -s3.port=9000
+      - name: Wait for S3
+        run: |
+          python - <<'PY'
+          import os, time, boto3
+          client = boto3.client('s3', endpoint_url=os.environ['TEST_S3_ENDPOINT'],
+              aws_access_key_id=os.environ['TEST_S3_ACCESS_KEY'],
+              aws_secret_access_key=os.environ['TEST_S3_SECRET_KEY'])
+          for attempt in range(30):
+              try:
+                  client.list_buckets()
+                  break
+              except Exception:
+                  if attempt == 29:
+                      raise
+                  time.sleep(1)
+          PY
+      - run: python -m pytest -q
+      - name: Remove disposable S3
+        if: always()
+        run: docker rm --force audit-s3 || true

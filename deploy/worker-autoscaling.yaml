@@ -1,0 +1,49 @@
+# Example only: replace the image and create media-runtime from your production env.
+# Requires KEDA installed, and existing PostgreSQL/Redis/private S3 services.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: media-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: media-worker}
+  template:
+    metadata:
+      labels: {app: media-worker}
+    spec:
+      terminationGracePeriodSeconds: 150
+      containers:
+        - name: worker
+          image: YOUR_REGISTRY/media-worker:YOUR_TESTED_TAG
+          command: [python, -m, app.distributed.worker]
+          envFrom:
+            - secretRef: {name: media-runtime}
+          resources:
+            requests: {cpu: "500m", memory: "512Mi", ephemeral-storage: "2Gi"}
+            limits: {cpu: "2", memory: "1536Mi", ephemeral-storage: "3Gi"}
+          volumeMounts:
+            - {name: temp, mountPath: /tmp}
+      volumes:
+        - name: temp
+          emptyDir: {sizeLimit: 2Gi}
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: media-workers
+spec:
+  scaleTargetRef: {name: media-worker}
+  pollingInterval: 15
+  cooldownPeriod: 900
+  minReplicaCount: 1
+  maxReplicaCount: 10
+  triggers:
+    - type: redis
+      metadata:
+        address: redis:6379
+        listName: media:conversions
+        listLength: "2"
+# Configure KEDA TriggerAuthentication for your production Redis credentials/TLS.
+# Duplicate queue notifications are harmless but can temporarily inflate queue length;
+# monitor active jobs and oldest-queued-job age alongside this scaling signal.

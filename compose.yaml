@@ -1,0 +1,152 @@
+name: youtube-media
+x-runtime: &runtime
+  environment: &common-env
+    DATABASE_URL: ${DATABASE_URL:?Run scripts/init-distributed-env.py first}
+    REDIS_URL: ${REDIS_URL:?}
+    S3_ENDPOINT: ${S3_ENDPOINT:-}
+    S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-}
+    S3_BUCKET: ${S3_BUCKET:?}
+    S3_REGION: ${S3_REGION:-us-east-1}
+    JOB_RETENTION_SECONDS: ${JOB_RETENTION_SECONDS:-3600}
+    MAX_STORED_JOBS: ${MAX_STORED_JOBS:-100}
+    CONVERSION_TIMEOUT_SECONDS: ${CONVERSION_TIMEOUT_SECONDS:-600}
+    MAX_DURATION_SECONDS: ${MAX_DURATION_SECONDS:-1800}
+    MAX_DOWNLOAD_MB: ${MAX_DOWNLOAD_MB:-512}
+    MAX_OUTPUT_MB: ${MAX_OUTPUT_MB:-512}
+    MAX_QUEUE_WAIT_SECONDS: ${MAX_QUEUE_WAIT_SECONDS:-900}
+    MAX_JOB_ATTEMPTS: ${MAX_JOB_ATTEMPTS:-3}
+    WORKER_LEASE_SECONDS: ${WORKER_LEASE_SECONDS:-60}
+    JOBS_PER_MINUTE: ${JOBS_PER_MINUTE:-10}
+  restart: unless-stopped
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: ["ALL"]
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: media
+      POSTGRES_DB: media
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run scripts/init-distributed-env.py first}
+    volumes: ["postgres-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U media -d media"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "128mb", "--maxmemory-policy", "noeviction"]
+    volumes: ["redis-data:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+  storage:
+    image: chrislusf/seaweedfs:4.48
+    command: ["mini", "-dir=/data", "-s3.port=9000"]
+    environment:
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY:?}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:?}
+    ports: ["127.0.0.1:19000:9000"]
+    volumes: ["object-data:/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:9333/cluster/status"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+  setup:
+    <<: *runtime
+    environment:
+      <<: *common-env
+      DATABASE_URL: ${SETUP_DATABASE_URL:-${DATABASE_URL}}
+      S3_ACCESS_KEY: ${SETUP_S3_ACCESS_KEY:-${S3_ACCESS_KEY}}
+      S3_SECRET_KEY: ${SETUP_S3_SECRET_KEY:-${S3_SECRET_KEY}}
+    build: {context: ., target: api}
+    command: ["python", "-m", "app.distributed.setup"]
+    restart: "no"
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      storage: {condition: service_healthy}
+  api:
+    <<: *runtime
+    environment:
+      <<: *common-env
+      DATABASE_URL: ${API_DATABASE_URL:-${DATABASE_URL}}
+      S3_ACCESS_KEY: ${API_S3_ACCESS_KEY:-${S3_ACCESS_KEY}}
+      S3_SECRET_KEY: ${API_S3_SECRET_KEY:-${S3_SECRET_KEY}}
+      SIGNING_SECRET: ${SIGNING_SECRET:?}
+      CLIENT_API_KEY: ${CLIENT_API_KEY:-}
+      DEV_ALLOW_ANONYMOUS: ${DEV_ALLOW_ANONYMOUS:-false}
+      AUTH_MODE: ${AUTH_MODE:-internal}
+      ANONYMOUS_JOBS_PER_HOUR: ${ANONYMOUS_JOBS_PER_HOUR:-5}
+      ANONYMOUS_MAX_ACTIVE_JOBS: ${ANONYMOUS_MAX_ACTIVE_JOBS:-2}
+      APP_ENV: ${APP_ENV:-development}
+      SESSION_ISSUER_SECRET: ${SESSION_ISSUER_SECRET:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      CONVERSION_API_BASE: ${CONVERSION_API_BASE:-}
+      FORWARDED_ALLOW_IPS: 172.29.247.2
+    networks: [default, edge]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
+      interval: 15s
+      timeout: 6s
+      retries: 3
+    build: {context: ., target: api}
+    depends_on:
+      setup: {condition: service_completed_successfully}
+    deploy:
+      resources:
+        limits: {memory: 384M, cpus: "1"}
+  dispatcher:
+    <<: *runtime
+    environment:
+      <<: *common-env
+      DATABASE_URL: ${DISPATCHER_DATABASE_URL:-${DATABASE_URL}}
+      S3_ACCESS_KEY: ${DISPATCHER_S3_ACCESS_KEY:-${S3_ACCESS_KEY}}
+      S3_SECRET_KEY: ${DISPATCHER_S3_SECRET_KEY:-${S3_SECRET_KEY}}
+    build: {context: ., target: api}
+    command: ["python", "-m", "app.distributed.dispatcher"]
+    depends_on:
+      setup: {condition: service_completed_successfully}
+  worker:
+    <<: *runtime
+    environment:
+      <<: *common-env
+      DATABASE_URL: ${WORKER_DATABASE_URL:-${DATABASE_URL}}
+      S3_ACCESS_KEY: ${WORKER_S3_ACCESS_KEY:-${S3_ACCESS_KEY}}
+      S3_SECRET_KEY: ${WORKER_S3_SECRET_KEY:-${S3_SECRET_KEY}}
+    build: {context: ., target: worker}
+    depends_on:
+      setup: {condition: service_completed_successfully}
+    # Media intermediates use the container writable disk, not memory-backed tmpfs.
+    # Production hosts must provision/monitor disk quotas (see docs/production.md).
+    stop_grace_period: 150s
+    deploy:
+      resources:
+        limits: {memory: 1536M, cpus: "2"}
+  frontend:
+    build: {context: ., target: frontend}
+    ports: ["127.0.0.1:${APP_PORT:-8000}:8080"]
+    networks:
+      edge:
+        ipv4_address: 172.29.247.2
+    depends_on:
+      api: {condition: service_healthy}
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  redis-data:
+  object-data:
+
+networks:
+  edge:
+    ipam:
+      config:
+        - subnet: 172.29.247.0/29
