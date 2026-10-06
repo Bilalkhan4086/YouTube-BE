@@ -1,3 +1,4 @@
+import os
 import time
 
 from sqlalchemy import JSON, Float, Integer, String, Text, create_engine
@@ -49,11 +50,17 @@ class Database:
     def __init__(self, url: str):
         from sqlalchemy.engine import make_url
 
+        url = make_url(url)
+        if url.drivername in {'postgres', 'postgresql'}:
+            url = url.set(drivername='postgresql+psycopg')
+        if url.get_backend_name() == 'postgresql' and os.getenv('DYNO'):
+            if 'sslmode' not in url.query:
+                url = url.update_query_dict({'sslmode': 'require'})
         connect_args = {}
         if make_url(url).get_backend_name() == 'postgresql':
             connect_args = {'connect_timeout': 5,
                             'options': '-c statement_timeout=15000 -c lock_timeout=5000'}
-        self.engine = create_engine(url, pool_pre_ping=True, pool_timeout=10,
+        self.engine = create_engine(url, pool_pre_ping=True, pool_timeout=10, pool_size=2, max_overflow=1,
                                     connect_args=connect_args)
         self.sessions = sessionmaker(self.engine, expire_on_commit=False)
 

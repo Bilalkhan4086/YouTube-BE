@@ -19,7 +19,7 @@ uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1 --timeout-graceful
 
 Open http://localhost:8000 for the UI or http://localhost:8000/docs for API docs.
 No separate frontend server is needed. `requirements.lock` pins the tested runtime
-versions; `requirements.txt` is the dependency update input. See the
+versions; `requirements-local.txt` is the dependency update input. See the
 [yt-dlp dependency documentation](https://github.com/yt-dlp/yt-dlp#dependencies)
 for JavaScript runtime and EJS requirements.
 

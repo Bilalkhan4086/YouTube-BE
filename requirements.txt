@@ -1,3 +1,2 @@
-fastapi>=0.115,<1
-uvicorn>=0.34,<1
-yt-dlp[default]>=2025.11.12
+# Heroku installs the pinned coordination API dependencies.
+-r requirements-api.lock

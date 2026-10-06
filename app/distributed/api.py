@@ -11,12 +11,12 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel, Field
-from redis import Redis
 from redis.exceptions import RedisError
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.schemas import ConversionRequest
+from app.distributed.broker import create_broker
 from app.distributed.config import Settings
 from app.distributed.db import Admission, Capacity, Database, Job
 from app.distributed.security import (Tokens, anonymous_subject, exchange_identity, rate_limit,
@@ -40,7 +40,7 @@ def create_app(settings=None, database=None, broker=None, storage=None):
         config = settings or Settings.load()
         app.state.config = config
         app.state.db = database or Database(config.database_url)
-        app.state.redis = broker or Redis.from_url(config.redis_url, socket_timeout=5, socket_connect_timeout=5)
+        app.state.redis = broker or create_broker(config.redis_url)
         app.state.storage = storage or Storage(config)
         app.state.tokens = Tokens(config.signing_secret)
         try:

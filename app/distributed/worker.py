@@ -14,6 +14,7 @@ from redis import Redis
 
 from app.processor import run_conversion
 from app.schemas import ConversionRequest
+from app.distributed.broker import create_broker
 from app.distributed.config import Settings
 from app.distributed.db import Database, Job
 from app.distributed.dispatcher import QUEUE
@@ -206,7 +207,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO)
     settings = Settings.load('worker')
     db = Database(settings.database_url)
-    broker = Redis.from_url(settings.redis_url, socket_timeout=5, socket_connect_timeout=5)
+    broker = create_broker(settings.redis_url)
     storage = Storage(settings)
     try:
         asyncio.run(run_worker(db, broker, storage, settings))

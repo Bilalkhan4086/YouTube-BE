@@ -4,6 +4,9 @@ The code now addresses the concrete audit defects. Deploying it still requires t
 anonymous abuse controls, credentials, TLS, disk capacity, backups and monitoring described
 here. The local demo remains available and is not a public account system.
 
+For the Heroku API and dispatcher followed by Azure workers, use the
+[Heroku deployment guide](heroku.md).
+
 ## Upgrade an existing installation
 
 This release introduces schema revision 2. Do not launch the new API, dispatcher or

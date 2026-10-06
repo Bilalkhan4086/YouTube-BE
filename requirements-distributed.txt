@@ -1,4 +1,4 @@
--r requirements.txt
+-r requirements-local.txt
 sqlalchemy>=2.0,<2.1
 psycopg[binary]>=3.2,<4
 redis>=5,<7

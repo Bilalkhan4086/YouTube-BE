@@ -5,6 +5,7 @@ import time
 from redis import Redis
 from sqlalchemy import delete, select
 
+from app.distributed.broker import create_broker
 from app.distributed.config import Settings
 from app.distributed.db import Admission, Database, Job
 from app.distributed.storage import Storage
@@ -106,7 +107,7 @@ def main():
     logging.basicConfig(level=logging.INFO)
     settings = Settings.load('dispatcher')
     db = Database(settings.database_url)
-    broker = Redis.from_url(settings.redis_url, socket_timeout=5, socket_connect_timeout=5)
+    broker = create_broker(settings.redis_url)
     storage = Storage(settings)
     while True:
         try:
